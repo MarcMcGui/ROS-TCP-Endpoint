@@ -10,7 +10,7 @@ import time
 import uuid
 
 from example_interfaces.action import Fibonacci
-from rclpy.serialization import serialize_message
+from rclpy.serialization import serialize_message, deserialize_message
 
 from ros_tcp_endpoint.client import ClientThread
 
@@ -43,7 +43,7 @@ def _serialize_command(command, payload):
     )
 
 
-def _read_loop(sock, cancel_state):
+def _read_loop(sock, runtime_state):
     try:
         while True:
             try:
@@ -59,26 +59,42 @@ def _read_loop(sock, cancel_state):
             if destination.startswith("__"):
                 message = json.loads(payload.decode("utf-8"))
                 print(f"[UNITY] Received {destination}: {message}")
-                cancel_goal_id = cancel_state.get("goal_id")
-                if (
-                    destination == "__action_result"
-                    and cancel_goal_id is not None
-                    and message.get("goal_id") == cancel_goal_id
-                ):
-                    cancel_state["event"].set()
+                if destination == "__action_feedback":
+                    runtime_state["pending_payload_type"] = "feedback"
+                elif destination == "__action_result":
+                    runtime_state["pending_payload_type"] = "result"
+                    cancel_goal_id = runtime_state.get("cancel_goal_id")
+                    if (
+                        cancel_goal_id is not None
+                        and message.get("goal_id") == cancel_goal_id
+                    ):
+                        runtime_state["cancel_event"].set()
+                elif destination == "__action_goal_request":
+                    runtime_state["pending_payload_type"] = "goal"
             else:
-                print(f"[UNITY] Received {destination}: {payload[:80]!r}")
+                pretty = _decode_ros_payload(
+                    runtime_state.get("pending_payload_type"), payload
+                )
+                if pretty is not None:
+                    print(f"[UNITY] Decoded {destination}: {pretty}")
+                else:
+                    print(f"[UNITY] Received {destination}: {payload[:80]!r}")
+                runtime_state["pending_payload_type"] = None
     except ConnectionError:
         pass
 
 
 def main():
     print("[UNITY] Connecting to ROS TCP Endpoint at %s:%s" % (HOST, PORT))
-    cancel_state = {"goal_id": None, "event": threading.Event()}
+    runtime_state = {
+        "cancel_goal_id": None,
+        "cancel_event": threading.Event(),
+        "pending_payload_type": None,
+    }
     with socket.create_connection((HOST, PORT), timeout=5) as sock:
         sock.settimeout(1.0)
         reader = threading.Thread(
-            target=_read_loop, args=(sock, cancel_state), daemon=True
+            target=_read_loop, args=(sock, runtime_state), daemon=True
         )
         reader.start()
 
@@ -116,8 +132,8 @@ def main():
         sock.sendall(cancel_goal_cmd)
         sock.sendall(ClientThread.serialize_message(ACTION_NAME, cancel_goal_msg))
         print("[UNITY] Sent long-running goal", cancel_goal_id)
-        cancel_state["goal_id"] = cancel_goal_id
-        cancel_state["event"].clear()
+        runtime_state["cancel_goal_id"] = cancel_goal_id
+        runtime_state["cancel_event"].clear()
 
         time.sleep(3.0)
         cancel_cmd = _serialize_command(
@@ -126,7 +142,20 @@ def main():
         sock.sendall(cancel_cmd)
         print("[UNITY] Requested cancel for", cancel_goal_id)
 
-        cancel_state["event"].wait(timeout=20.0)
+        runtime_state["cancel_event"].wait(timeout=20.0)
+
+
+def _decode_ros_payload(payload_type, payload):
+    if payload_type == "feedback":
+        msg = deserialize_message(payload, Fibonacci.Feedback)
+        return {"sequence": list(msg.sequence)}
+    if payload_type == "result":
+        msg = deserialize_message(payload, Fibonacci.Result)
+        return {"sequence": list(msg.sequence)}
+    if payload_type == "goal":
+        msg = deserialize_message(payload, Fibonacci.Goal)
+        return {"order": msg.order}
+    return None
 
 
 if __name__ == "__main__":
