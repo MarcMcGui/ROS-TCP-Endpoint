@@ -205,6 +205,8 @@ class ClientThread(threading.Thread):
                             self.tcp_server.pending_srv_id, data
                         )
                     self.tcp_server.pending_srv_id = None
+                elif self.tcp_server.pending_action is not None:
+                    self._handle_pending_action(destination, data)
                 elif destination == "":
                     # ignore this keepalive message, listen for more
                     pass
@@ -226,3 +228,57 @@ class ClientThread(threading.Thread):
             halt_event.set()
             self.conn.close()
             self.tcp_server.loginfo("Disconnected from {}".format(self.incoming_ip))
+
+    def _handle_pending_action(self, destination, data):
+        action_context = self.tcp_server.pending_action
+        self.tcp_server.pending_action = None
+
+        if action_context is None:
+            return
+
+        action_name = action_context.get("action_name", destination)
+        phase = action_context.get("phase")
+
+        if phase == "goal_to_ros":
+            self._deliver_ros_action_goal(action_name, action_context.get("goal_id"), destination, data)
+        elif phase == "feedback_to_ros":
+            self._deliver_unity_action_feedback(action_name, action_context.get("goal_id"), data)
+        elif phase == "result_to_ros":
+            self._deliver_unity_action_result(
+                action_name, action_context.get("goal_id"), action_context.get("status"), data
+            )
+        else:
+            self.tcp_server.logwarn("Unhandled action phase '{}'; dropping payload.".format(phase))
+
+    def _deliver_ros_action_goal(self, action_name, goal_id, destination, data):
+        if action_name is None:
+            action_name = destination
+
+        action_client = self.tcp_server.ros_action_clients.get(action_name)
+        if action_client is None:
+            error_msg = "Action goal received for unregistered action '{}'".format(action_name)
+            self.tcp_server.send_unity_error(error_msg)
+            self.tcp_server.logerr(error_msg)
+            return
+
+        action_client.send_goal(goal_id, data)
+
+    def _deliver_unity_action_feedback(self, action_name, goal_id, data):
+        action_server = self.tcp_server.unity_action_servers.get(action_name)
+        if action_server is None:
+            error_msg = "Action feedback received for unregistered Unity action '{}'".format(action_name)
+            self.tcp_server.send_unity_error(error_msg)
+            self.tcp_server.logerr(error_msg)
+            return
+
+        action_server.handle_unity_feedback(goal_id, data)
+
+    def _deliver_unity_action_result(self, action_name, goal_id, status, data):
+        action_server = self.tcp_server.unity_action_servers.get(action_name)
+        if action_server is None:
+            error_msg = "Action result received for unregistered Unity action '{}'".format(action_name)
+            self.tcp_server.send_unity_error(error_msg)
+            self.tcp_server.logerr(error_msg)
+            return
+
+        action_server.handle_unity_result(goal_id, status, data)

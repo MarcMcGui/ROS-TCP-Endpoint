@@ -55,6 +55,10 @@ class UnityTcpSender:
         self.srv_lock = threading.Lock()
         self.services_waiting = {}
 
+        # preview: action protocol support (goal_id -> ThreadPauser)
+        self.action_lock = threading.Lock()
+        self.actions_waiting = {}
+
     def send_unity_info(self, text):
         if self.queue is not None:
             command = SysCommand_Log()
@@ -88,6 +92,74 @@ class UnityTcpSender:
         if self.queue is not None:
             serialized_message = ClientThread.serialize_message(topic, message)
             self.queue.put(serialized_message)
+
+    def send_action_feedback(self, topic, goal_id, feedback_msg):
+        if self.queue is None:
+            return
+
+        header = SysCommand_Action()
+        header.goal_id = goal_id
+        header.action_name = topic
+        serialized_header = ClientThread.serialize_command("__action_feedback", header)
+        serialized_message = ClientThread.serialize_message(topic, feedback_msg)
+        self.queue.put(b"".join([serialized_header, serialized_message]))
+
+    def send_action_result(self, topic, goal_id, status, result_msg):
+        if self.queue is None:
+            return
+
+        header = SysCommand_Action()
+        header.goal_id = goal_id
+        header.status = status
+        header.action_name = topic
+        serialized_header = ClientThread.serialize_command("__action_result", header)
+        serialized_message = ClientThread.serialize_message(topic, result_msg)
+        self.queue.put(b"".join([serialized_header, serialized_message]))
+
+    def send_unity_action_goal_request(self, action_name, goal_id, goal_msg):
+        if self.queue is None:
+            self.tcp_server.logwarn(
+                "Cannot forward action goal {} for {} because Unity queue is unavailable".format(
+                    goal_id, action_name
+                )
+            )
+            return
+
+        header = SysCommand_Action()
+        header.goal_id = goal_id
+        header.action_name = action_name
+        serialized_header = ClientThread.serialize_command("__action_goal_request", header)
+        serialized_message = ClientThread.serialize_message(action_name, goal_msg)
+        self.queue.put(b"".join([serialized_header, serialized_message]))
+
+    def send_unity_action_cancel_request(self, action_name, goal_id):
+        if self.queue is None:
+            self.tcp_server.logwarn(
+                "Cannot forward action cancel {} for {} because Unity queue is unavailable".format(
+                    goal_id, action_name
+                )
+            )
+            return
+
+        header = SysCommand_Action()
+        header.goal_id = goal_id
+        header.action_name = action_name
+        serialized_header = ClientThread.serialize_command("__action_cancel_request", header)
+        self.queue.put(serialized_header)
+
+    def register_pending_action(self, goal_id):
+        thread_pauser = ThreadPauser()
+        with self.action_lock:
+            self.actions_waiting[goal_id] = thread_pauser
+        return thread_pauser
+
+    def resolve_pending_action(self, goal_id, data):
+        with self.action_lock:
+            thread_pauser = self.actions_waiting.get(goal_id)
+            if thread_pauser is None:
+                return
+            del self.actions_waiting[goal_id]
+        thread_pauser.resume_with_result(data)
 
     def send_unity_service_request(self, topic, service_class, request):
         if self.queue is None:
@@ -227,12 +299,20 @@ class SysCommand_TopicsResponse:
         types = []
 
 
+class SysCommand_Action:
+    def __init__(self):
+        self.goal_id = ""
+        self.status = 0
+        self.action_name = ""
+
+
 class SysCommand_Handshake:
     def __init__(self, metadata):
-        self.version = "v0.7.0"
+        self.version = "v0.8.0"
         self.metadata = json.dumps(metadata.__dict__)
 
 
 class SysCommand_Handshake_Metadata:
     def __init__(self):
         self.protocol = "ROS2"
+        self.features = ["actions-preview"]
