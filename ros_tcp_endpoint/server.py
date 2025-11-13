@@ -434,28 +434,35 @@ class SysCommands:
     def topic_list(self):
         self.tcp_server.unity_tcp_sender.send_topic_list()
 
-    def resolve_message_name(self, name, extension="msg"):
-        """
-        Resolves a ROS message/service/action name to the Python class.
-        Supports msg, srv, and action.
-        """
+    def resolve_message_name(self, name, extension_hint=None):
+        import importlib
+
         try:
-            package_name, class_name = name.split("/")
+            parts = name.split('/')
+            if len(parts) == 3:
+                package_name, extension, class_name = parts
+            elif len(parts) == 2:
+                package_name, class_name = parts
+                extension = extension_hint or "msg"
+            else:
+                raise ValueError(f"Invalid ROS type string: {name}")
+
+            if extension not in ["msg", "srv", "action"]:
+                extension = "msg"
+
+            # Construct proper module name
             if extension == "action":
                 # Actions live in <package>.action._<lowercase_class_name>
                 mod_name = f"{package_name}.action._{class_name.lower()}"
-                module = importlib.import_module(mod_name)
             else:
-                # Messages or services
                 mod_name = f"{package_name}.{extension}"
-                module = importlib.import_module(mod_name)
 
+            module = importlib.import_module(mod_name)
             msg_class = getattr(module, class_name)
             return msg_class
-        except (IndexError, AttributeError, ImportError) as e:
-            self.tcp_server.logerr(
-                f"Failed to resolve {extension} name '{name}': {e}"
-            )
+
+        except Exception as e:
+            self.tcp_server.logerr(f"Failed to resolve {name}: {e}")
             return None
 
 
