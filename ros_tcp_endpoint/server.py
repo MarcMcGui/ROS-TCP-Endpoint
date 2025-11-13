@@ -435,28 +435,29 @@ class SysCommands:
         self.tcp_server.unity_tcp_sender.send_topic_list()
 
     def resolve_message_name(self, name, extension="msg"):
+        """
+        Resolves a ROS message/service/action name to the Python class.
+        Supports msg, srv, and action.
+        """
         try:
-            names = name.split("/")
-            module_name = names[0]
-            class_name = names[1]
-            importlib.import_module(module_name + "." + extension)
-            module = sys.modules[module_name]
-            if module is None:
-                self.tcp_server.logerr("Failed to resolve module {}".format(module_name))
-            module = getattr(module, extension)
-            if module is None:
-                self.tcp_server.logerr(
-                    "Failed to resolve module {}.{}".format(module_name, extension)
-                )
-            module = getattr(module, class_name)
-            if module is None:
-                self.tcp_server.logerr(
-                    "Failed to resolve module {}.{}.{}".format(module_name, extension, class_name)
-                )
-            return module
-        except (IndexError, KeyError, AttributeError, ImportError) as e:
-            self.tcp_server.logerr("Failed to resolve message name: {}".format(e))
+            package_name, class_name = name.split("/")
+            if extension == "action":
+                # Actions live in <package>.action._<lowercase_class_name>
+                mod_name = f"{package_name}.action._{class_name.lower()}"
+                module = importlib.import_module(mod_name)
+            else:
+                # Messages or services
+                mod_name = f"{package_name}.{extension}"
+                module = importlib.import_module(mod_name)
+
+            msg_class = getattr(module, class_name)
+            return msg_class
+        except (IndexError, AttributeError, ImportError) as e:
+            self.tcp_server.logerr(
+                f"Failed to resolve {extension} name '{name}': {e}"
+            )
             return None
+
 
     def _set_pending_action(self, action_name, goal_id, phase, status=None):
         self.tcp_server.pending_action = {
