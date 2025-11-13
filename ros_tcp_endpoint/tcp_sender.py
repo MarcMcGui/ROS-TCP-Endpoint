@@ -274,10 +274,17 @@ class UnityTcpSender:
     def parse_message_name(self, name):
         try:
             # Example input string: <class 'std_msgs.msg._string.Metaclass_String'>
-            names = (str(type(name))).split(".")
-            module_name = names[0][8:]
-            class_name = names[-1].split("_")[-1][:-2]
-            return "{}/{}".format(module_name, class_name)
+            module_path = msg_class.__module__
+            class_name = msg_class.__name__
+
+            if ".action." in module_path:
+                pkg = module_path.split(".")[0]
+                return f"{pkg}/action/{class_name}"
+            elif ".msg." in module_path:
+                pkg = module_path.split(".")[0]
+                return f"{pkg}/msg/{class_name}"
+            else:
+                return f"{module_path}/{class_name}"
         except (IndexError, AttributeError, ImportError) as e:
             self.tcp_server.logerr("Failed to resolve message name: {}".format(e))
             return None
