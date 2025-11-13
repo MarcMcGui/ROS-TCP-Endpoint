@@ -435,27 +435,27 @@ class SysCommands:
         self.tcp_server.unity_tcp_sender.send_topic_list()
 
     def resolve_message_name(self, name, extension="msg"):
-        """
-        Resolves a ROS message/service/action name to the Python class.
-        Supports msg, srv, and action.
-        """
         try:
-            package_name, class_name = name.split("/")
-            if extension == "action":
-                # Actions live in <package>.action._<lowercase_class_name>
-                mod_name = f"{package_name}.action._{class_name.lower()}"
-                module = importlib.import_module(mod_name)
-            else:
-                # Messages or services
-                mod_name = f"{package_name}.{extension}"
-                module = importlib.import_module(mod_name)
+            # If the module is one of your custom "Unity-only" action types, skip real import
+            if name.startswith("ryan_msgs/WhisperSTT"):
+                # Return a dummy class that just holds a dictionary
+                class DummyMessage:
+                    def __init__(self, **kwargs):
+                        for k, v in kwargs.items():
+                            setattr(self, k, v)
+                return DummyMessage
 
-            msg_class = getattr(module, class_name)
-            return msg_class
-        except (IndexError, AttributeError, ImportError) as e:
-            self.tcp_server.logerr(
-                f"Failed to resolve {extension} name '{name}': {e}"
-            )
+            # normal behavior for other types
+            names = name.split("/")
+            module_name = names[0]
+            class_name = names[1]
+            importlib.import_module(module_name + "." + extension)
+            module = sys.modules[module_name]
+            module = getattr(module, extension)
+            module = getattr(module, class_name)
+            return module
+        except (IndexError, KeyError, AttributeError, ImportError) as e:
+            self.tcp_server.logerr("Failed to resolve message name: {}".format(e))
             return None
 
 
