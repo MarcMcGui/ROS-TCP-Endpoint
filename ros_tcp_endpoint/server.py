@@ -468,6 +468,30 @@ class SysCommands:
                             fallback_mod_name = f"{package_name}.{fallback_ext}"
                             fallback_module = importlib.import_module(fallback_mod_name)
                             fallback_class = getattr(fallback_module, class_name)
+                            
+                            # Special handling for action types:
+                            # If we found an action wrapper class (which cannot be instantiated),
+                            # extract the appropriate Goal/Result/Feedback subclass based on the class name
+                            if fallback_ext == "action":
+                                if class_name.endswith("Goal"):
+                                    # Return the Goal subclass from the action
+                                    action_goal = getattr(fallback_class, "Goal", None)
+                                    if action_goal is not None:
+                                        self.tcp_server.loginfo(f"Resolved {name} to action Goal type")
+                                        return action_goal
+                                elif class_name.endswith("Result"):
+                                    # Return the Result subclass from the action
+                                    action_result = getattr(fallback_class, "Result", None)
+                                    if action_result is not None:
+                                        self.tcp_server.loginfo(f"Resolved {name} to action Result type")
+                                        return action_result
+                                elif class_name.endswith("Feedback"):
+                                    # Return the Feedback subclass from the action
+                                    action_feedback = getattr(fallback_class, "Feedback", None)
+                                    if action_feedback is not None:
+                                        self.tcp_server.loginfo(f"Resolved {name} to action Feedback type")
+                                        return action_feedback
+                            
                             self.tcp_server.loginfo(f"Resolved {name} from {fallback_ext} module instead of {extension}")
                             return fallback_class
                         except (ModuleNotFoundError, AttributeError):
