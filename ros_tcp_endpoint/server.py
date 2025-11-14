@@ -454,9 +454,26 @@ class SysCommands:
             # For all types, import from <package>.<extension> and get the class by name
             mod_name = f"{package_name}.{extension}"
 
-            module = importlib.import_module(mod_name)
-            msg_class = getattr(module, class_name)
-            return msg_class
+            try:
+                module = importlib.import_module(mod_name)
+                msg_class = getattr(module, class_name)
+                return msg_class
+            except (ModuleNotFoundError, AttributeError):
+                # If not found in the specified extension, try other extensions
+                # This handles cases where action goal/result/feedback are registered with their ROS message name
+                # but the actual class lives in the action module
+                if extension == "msg":
+                    for fallback_ext in ["action", "srv"]:
+                        try:
+                            fallback_mod_name = f"{package_name}.{fallback_ext}"
+                            fallback_module = importlib.import_module(fallback_mod_name)
+                            fallback_class = getattr(fallback_module, class_name)
+                            self.tcp_server.loginfo(f"Resolved {name} from {fallback_ext} module instead of {extension}")
+                            return fallback_class
+                        except (ModuleNotFoundError, AttributeError):
+                            continue
+                # If we get here, nothing worked
+                raise
 
         except Exception as e:
             self.tcp_server.logerr(f"Failed to resolve {name}: {e}")
