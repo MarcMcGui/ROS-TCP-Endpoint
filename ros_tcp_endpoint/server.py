@@ -219,6 +219,15 @@ class SysCommands:
     def __init__(self, tcp_server):
         self.tcp_server = tcp_server
 
+    def _normalize_action_name(self, name: str) -> str:
+        """Return a canonical action/topic name: single leading '/', no trailing '/', collapse repeats."""
+        if name is None:
+            return name
+        # Strip whitespace and collapse multiple slashes
+        parts = [p for p in str(name).strip().split('/') if p]
+        normalized = '/' + '/'.join(parts) if parts else ''
+        return normalized
+
     def subscribe(self, topic, message_name):
         if topic == "":
             self.tcp_server.send_unity_error(
@@ -341,7 +350,12 @@ class SysCommands:
                 )
             )
             return
-
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "RegisterRosAction: normalized action name '{}' -> '{}'".format(original_name, action_name)
+            )
         action_class = self.resolve_message_name(action_type, "action")
         if action_class is None:
             self.tcp_server.send_unity_error(
@@ -370,7 +384,12 @@ class SysCommands:
                 )
             )
             return
-
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "RegisterUnityAction: normalized action name '{}' -> '{}'".format(original_name, action_name)
+            )
         action_class = self.resolve_message_name(action_type, "action")
         if action_class is None:
             self.tcp_server.send_unity_error(
@@ -392,14 +411,31 @@ class SysCommands:
         self.tcp_server.loginfo("RegisterUnityAction({}, {}) OK".format(action_name, action_class))
 
     def action_goal(self, action_name, goal_id):
-        if action_name not in self.tcp_server.ros_action_clients:
-            self.tcp_server.send_unity_error(
-                "Action goal received for unknown ROS action '{}'".format(action_name)
+        # Normalize provided action name for consistent lookup
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "action_goal: normalized action name '{}' -> '{}'".format(original_name, action_name)
             )
-            return
+        # Defer goal delivery even if the action client is not yet registered.
+        # This avoids transient ordering issues where __ros_action arrives slightly
+        # after __action_goal on the endpoint. We'll check again at delivery time.
+        if action_name not in self.tcp_server.ros_action_clients:
+            self.tcp_server.logwarn(
+                "Action goal received before action '{}' registered; deferring until payload arrives.".format(
+                    action_name
+                )
+            )
         self._set_pending_action(action_name, goal_id, "goal_to_ros")
 
     def action_feedback(self, action_name, goal_id):
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "action_feedback: normalized action name '{}' -> '{}'".format(original_name, action_name)
+            )
         if action_name not in self.tcp_server.unity_action_servers:
             self.tcp_server.send_unity_error(
                 "Action feedback received for unknown Unity action '{}'".format(action_name)
@@ -408,6 +444,12 @@ class SysCommands:
         self._set_pending_action(action_name, goal_id, "feedback_to_ros")
 
     def action_result(self, action_name, goal_id, status=0):
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "action_result: normalized action name '{}' -> '{}'".format(original_name, action_name)
+            )
         if action_name not in self.tcp_server.unity_action_servers:
             self.tcp_server.send_unity_error(
                 "Action result received for unknown Unity action '{}'".format(action_name)
@@ -416,6 +458,12 @@ class SysCommands:
         self._set_pending_action(action_name, goal_id, "result_to_ros", status=status)
 
     def action_cancel(self, action_name, goal_id):
+        original_name = action_name
+        action_name = self._normalize_action_name(action_name)
+        if original_name != action_name:
+            self.tcp_server.loginfo(
+                "action_cancel: normalized action name '{}' -> '{}'".format(original_name, action_name)
+            )
         if action_name in self.tcp_server.ros_action_clients:
             self.tcp_server.cancel_ros_action_goal(action_name, goal_id)
         else:
@@ -499,6 +547,7 @@ class SysCommands:
         except Exception as e:
             self.tcp_server.logerr(f"Failed to resolve {name}: {e}")
             return None
+
 
     def _set_pending_action(self, action_name, goal_id, phase, status=None):
         self.tcp_server.pending_action = {

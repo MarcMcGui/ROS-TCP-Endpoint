@@ -256,7 +256,11 @@ class ClientThread(threading.Thread):
 
         action_client = self.tcp_server.ros_action_clients.get(action_name)
         if action_client is None:
-            error_msg = "Action goal received for unregistered action '{}'".format(action_name)
+            # Provide better diagnostics to help track mismatches/race conditions
+            known = list(self.tcp_server.ros_action_clients.keys())
+            error_msg = "Action goal received for unregistered action '{}' (known actions: {})".format(
+                action_name, known
+            )
             self.tcp_server.send_unity_error(error_msg)
             self.tcp_server.logerr(error_msg)
             return
