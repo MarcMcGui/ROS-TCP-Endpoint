@@ -451,11 +451,8 @@ class SysCommands:
                 extension = "msg"
 
             # Construct proper module name
-            if extension == "action":
-                # Actions live in <package>.action._<lowercase_class_name>
-                mod_name = f"{package_name}.action._{class_name.lower()}"
-            else:
-                mod_name = f"{package_name}.{extension}"
+            # For all types, import from <package>.<extension> and get the class by name
+            mod_name = f"{package_name}.{extension}"
 
             module = importlib.import_module(mod_name)
             msg_class = getattr(module, class_name)
