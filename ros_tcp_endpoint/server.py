@@ -471,26 +471,23 @@ class SysCommands:
                             
                             # Special handling for action types:
                             # If we found an action wrapper class (which cannot be instantiated),
-                            # extract the appropriate Goal/Result/Feedback subclass based on the class name
+                            # we need to return the Goal/Result/Feedback subclass instead.
+                            # Try to instantiate it - if it fails with NotImplementedError, 
+                            # it's an action wrapper class, so extract Goal subclass as fallback
                             if fallback_ext == "action":
-                                if class_name.endswith("Goal"):
-                                    # Return the Goal subclass from the action
+                                try:
+                                    # Try to instantiate to check if it's a wrapper class
+                                    test_instance = fallback_class()
+                                    # If successful, return the class as-is
+                                    return fallback_class
+                                except NotImplementedError:
+                                    # It's an action wrapper class, extract the Goal subclass
                                     action_goal = getattr(fallback_class, "Goal", None)
                                     if action_goal is not None:
-                                        self.tcp_server.loginfo(f"Resolved {name} to action Goal type")
+                                        self.tcp_server.loginfo(f"Resolved {name} to action Goal type (wrapper class detected)")
                                         return action_goal
-                                elif class_name.endswith("Result"):
-                                    # Return the Result subclass from the action
-                                    action_result = getattr(fallback_class, "Result", None)
-                                    if action_result is not None:
-                                        self.tcp_server.loginfo(f"Resolved {name} to action Result type")
-                                        return action_result
-                                elif class_name.endswith("Feedback"):
-                                    # Return the Feedback subclass from the action
-                                    action_feedback = getattr(fallback_class, "Feedback", None)
-                                    if action_feedback is not None:
-                                        self.tcp_server.loginfo(f"Resolved {name} to action Feedback type")
-                                        return action_feedback
+                                    # If no Goal subclass, re-raise the error
+                                    raise
                             
                             self.tcp_server.loginfo(f"Resolved {name} from {fallback_ext} module instead of {extension}")
                             return fallback_class
@@ -502,7 +499,6 @@ class SysCommands:
         except Exception as e:
             self.tcp_server.logerr(f"Failed to resolve {name}: {e}")
             return None
-
 
     def _set_pending_action(self, action_name, goal_id, phase, status=None):
         self.tcp_server.pending_action = {
